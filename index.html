@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobilità Reggio Emilia</title>
+<meta name="description" content="Traffico in tempo reale (TomTom) e rete del trasporto pubblico SETA sul territorio di Reggio Emilia.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&display=swap">
+<style>
+  /* Layout: mappa a tutto schermo, pannello di controllo flottante in alto a sinistra */
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --fg:#17324d; --muted:#5c6f82; --line:#d9e0e6;
+    --accent:#0066cc; --ok:#2e9e4f; --warn:#e8a317; --bad:#d1342f; --worst:#7a1414;
+    --font:"Titillium Web", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1720; --panel:#17212c; --fg:#e6edf3; --muted:#9aabbb; --line:#2a3846; --accent:#4da3ff; color-scheme:dark; }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+  #map{position:absolute;inset:0}
+  .panel{
+    position:absolute;z-index:1000;top:12px;left:12px;width:min(320px, calc(100% - 24px));
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    box-shadow:0 4px 18px rgba(0,0,0,.12);padding:14px 16px;display:flex;flex-direction:column;gap:12px
+  }
+  .panel h1{margin:0;font-size:18px;font-weight:700;letter-spacing:.2px}
+  .panel .sub{margin:-8px 0 0;color:var(--muted);font-size:12.5px}
+  label{font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600}
+  .row{display:flex;gap:8px;align-items:center}
+  input[type=password],input[type=text],select{
+    flex:1;min-width:0;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:5px;
+    background:var(--bg);color:var(--fg)
+  }
+  button{font:inherit;font-weight:600;padding:6px 12px;border:0;border-radius:5px;background:var(--accent);color:#fff;cursor:pointer}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .check{display:flex;gap:8px;align-items:center;font-size:14px;text-transform:none;letter-spacing:0;color:var(--fg);font-weight:400}
+  .legend{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:11px;color:var(--muted)}
+  .legend span{display:block;height:6px;border-radius:3px;margin-bottom:3px}
+  .status{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .status.err{color:var(--bad)}
+  .hint{font-size:12px;color:var(--muted);margin:0}
+  .hint a{color:var(--accent)}
+  .collapse{background:none;color:var(--muted);padding:0 4px;font-size:18px;line-height:1}
+  .panel.min > :not(.head){display:none}
+  .head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .panel{max-height:calc(100% - 24px);overflow-y:auto}
+  .sep{border:0;border-top:1px solid var(--line);margin:0}
+  .groups{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:6px}
+  .groups .check{font-size:13px}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 4px}
+  .chip{display:inline-block;min-width:24px;text-align:center;padding:1px 6px;border-radius:4px;font-weight:700;font-size:12px;color:#fff;cursor:pointer;border:0}
+  .leaflet-popup-content{font:13px/1.4 var(--font);margin:10px 12px}
+  .leaflet-popup-content b{font-size:14px}
+  .pop-meta{color:#5c6f82;font-size:12px}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="Mappa del traffico di Reggio Emilia"></div>
+
+<section class="panel" id="panel">
+  <div class="head">
+    <div>
+      <h1>Mobilità in tempo reale</h1>
+      <p class="sub">Reggio Emilia · traffico TomTom, bus SETA</p>
+    </div>
+    <button class="collapse" id="toggle" aria-label="Riduci pannello">–</button>
+  </div>
+
+  <div id="keyBox">
+    <label for="key">Chiave API TomTom</label>
+    <div class="row">
+      <input id="key" type="password" placeholder="Incolla la chiave" autocomplete="off">
+      <button id="apply">Applica</button>
+    </div>
+    <p class="hint">Gratuita, senza carta di credito: <a href="https://developer.tomtom.com/" target="_blank" rel="noopener">developer.tomtom.com</a>. La chiave resta solo in questo browser.</p>
+  </div>
+
+  <div>
+    <label class="check"><input type="checkbox" id="flowOn" checked> Flussi di traffico</label>
+    <div class="row" style="margin-top:6px">
+      <select id="flowStyle" aria-label="Stile flussi">
+        <option value="relative0">Velocità rispetto al flusso libero</option>
+        <option value="relative-delay">Solo tratti rallentati</option>
+        <option value="absolute">Velocità assoluta</option>
+        <option value="reduced-sensitivity">Sensibilità ridotta</option>
+      </select>
+    </div>
+  </div>
+
+  <label class="check"><input type="checkbox" id="incOn" checked> Incidenti, cantieri e chiusure</label>
+
+  <div>
+    <label for="opacity">Opacità strato traffico</label>
+    <input id="opacity" type="range" min="0.3" max="1" step="0.05" value="0.9" style="width:100%">
+  </div>
+
+  <div>
+    <div class="legend" aria-label="Legenda velocità">
+      <div><span style="background:var(--ok)"></span>Scorrevole</div>
+      <div><span style="background:var(--warn)"></span>Rallentato</div>
+      <div><span style="background:var(--bad)"></span>Congestionato</div>
+      <div><span style="background:var(--worst)"></span>Fermo / chiuso</div>
+    </div>
+  </div>
+
+  <div class="status" id="status" aria-live="polite">Inserisci la chiave per attivare gli strati.</div>
+
+  <hr class="sep">
+
+  <div>
+    <label>Trasporto pubblico SETA</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" id="busLines" checked> Percorsi delle linee</label>
+    <label class="check"><input type="checkbox" id="busStops" checked> Fermate</label>
+    <div class="groups" aria-label="Tipi di linea">
+      <label class="check"><input type="checkbox" class="grp" value="urbana" checked> Urbane</label>
+      <label class="check"><input type="checkbox" class="grp" value="navetta" checked> Navette centro</label>
+      <label class="check"><input type="checkbox" class="grp" value="extraurbana"> Extraurbane</label>
+      <label class="check"><input type="checkbox" class="grp" value="scolastica"> Scolastiche</label>
+    </div>
+  </div>
+  <div>
+    <label for="lineSel">Evidenzia una linea</label>
+    <div class="row" style="margin-top:6px">
+      <select id="lineSel"><option value="">Tutte le linee</option></select>
+    </div>
+  </div>
+  <p class="hint" id="busInfo"></p>
+</section>
+
+<script src="config.js"></script>
+<script src="data/seta.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+  const REFRESH_MIN = 5;                       // aggiornamento automatico
+  const CENTER = [44.6983, 10.6312], ZOOM = 13;
+  const BOUNDS = L.latLngBounds([44.60, 10.48], [44.80, 10.78]); // territorio comunale + cintura
+
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const map = L.map('map', {zoomControl:false, maxBounds:BOUNDS.pad(0.6), minZoom:10}).setView(CENTER, ZOOM);
+  L.control.zoom({position:'topright'}).addTo(map);
+  L.control.scale({imperial:false, position:'bottomleft'}).addTo(map);
+
+  // Mappa di sfondo: OpenStreetMap finché manca la chiave, poi la base TomTom (Map Display API, stessa chiave)
+  const osmBase = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+  let base = osmBase;
+  function setBase(which, key){
+    let next = osmBase;
+    if (which && key){
+      const url = which === 'orbis'
+        ? 'https://{s}.api.tomtom.com/maps/orbis/display/raster/tile/{z}/{x}/{y}?apiVersion=2&key={key}&style=' + (dark?'street-dark':'street-light') + '&tileSize=256&geopoliticalView=Unified'
+        : 'https://{s}.api.tomtom.com/map/1/tile/basic/' + (dark?'night':'main') + '/{z}/{x}/{y}.png?key={key}&tileSize=256';
+      next = L.tileLayer(url, { subdomains:'abcd', key: encodeURIComponent(key), maxZoom:22, zIndex:1,
+        attribution:'Mappa &copy; <a href="https://www.tomtom.com/">TomTom</a>' });
+    }
+    if (next === base) return;
+    map.removeLayer(base); base = next.addTo(map); base.bringToBack();
+  }
+
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+    set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  };
+
+  let flow = null, inc = null, timer = null, api = null; // api: 'orbis' | 'legacy'
+
+  function stamp(){ return Math.floor(Date.now() / (REFRESH_MIN*60000)); }
+
+  function setStatus(msg, err){ const s=$('status'); s.textContent=msg; s.classList.toggle('err', !!err); }
+
+  // Indirizzi delle tile: Orbis (chiavi nuove) e versione 4 (chiavi storiche)
+  function tileUrl(which, kind){
+    if (which === 'orbis'){
+      return 'https://api.tomtom.com/maps/orbis/traffic/' + kind + '/raster/tile/{z}/{x}/{y}?apiVersion=2&key={key}&style=' + (dark?'dark':'light') + '&tileSize=256&t={t}';
+    }
+    const style = kind === 'flow' ? $('flowStyle').value : (dark ? 's0-dark' : 's0');
+    return 'https://api.tomtom.com/traffic/map/4/tile/' + kind + '/' + style + '/{z}/{x}/{y}.png?key={key}&tileSize=256&t={t}';
+  }
+
+  // Prova una tile sul centro di Reggio Emilia (z12) per capire quale API accetta la chiave
+  function probe(which, key){
+    return new Promise(res => {
+      const img = new Image();
+      const to = setTimeout(() => res(false), 8000);
+      img.onload = () => { clearTimeout(to); res(true); };
+      img.onerror = () => { clearTimeout(to); res(false); };
+      img.src = tileUrl(which, 'flow').replace('{z}','12').replace('{x}','2168').replace('{y}','1478')
+        .replace('{key}', encodeURIComponent(key)).replace('{t}', Date.now());
+    });
+  }
+
+  function makeLayer(kind, key, opacity, z){
+    const layer = L.tileLayer(tileUrl(api, kind), {
+      key: encodeURIComponent(key), t: stamp(), opacity, zIndex: z, maxZoom: 22,
+      attribution:'Traffico &copy; <a href="https://www.tomtom.com/">TomTom</a>'
+    });
+    layer.on('load', () => setStatus('API ' + (api==='orbis'?'Orbis':'v4') + ' · aggiornato alle ' + new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) + ' · prossimo tra ' + REFRESH_MIN + ' min'));
+    return layer;
+  }
+
+  async function render(reprobe){
+    const key = $('key').value.trim();
+    if (flow){ map.removeLayer(flow); flow=null; }
+    if (inc){ map.removeLayer(inc); inc=null; }
+    if (!key){ setBase(null); setStatus('Inserisci la chiave per attivare gli strati.'); return; }
+    if (reprobe || !api){
+      setStatus('Verifica della chiave in corso…');
+      api = null;
+      if (await probe('orbis', key)) api = 'orbis';
+      else if (await probe('legacy', key)) api = 'legacy';
+      if (!api){
+        setStatus('TomTom rifiuta la chiave. Controlla di aver copiato la "API Key" (non il nome dell\'app), che sia attiva da qualche minuto e che nel portale non abbia restrizioni di dominio che escludono questa pagina.', true);
+        return;
+      }
+    }
+    $('flowStyle').parentElement.hidden = (api === 'orbis');
+    setBase(api, key);
+    const op = parseFloat($('opacity').value);
+    if ($('flowOn').checked){ flow = makeLayer('flow', key, op, 400).addTo(map); }
+    if ($('incOn').checked){ inc = makeLayer('incidents', key, 1, 450).addTo(map); }
+    if (!flow && !inc) setStatus('Nessuno strato attivo.');
+    else setStatus('Caricamento…');
+  }
+
+  function refresh(){
+    [flow, inc].forEach(l => { if (l){ l.options.t = stamp(); l.redraw(); } });
+  }
+
+  $('apply').addEventListener('click', () => { store.set('tt_key', $('key').value.trim()); render(true); });
+  $('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('apply').click(); });
+  ['flowOn','incOn','flowStyle'].forEach(id => $(id).addEventListener('change', () => render(false)));
+  $('opacity').addEventListener('input', e => { if (flow) flow.setOpacity(parseFloat(e.target.value)); });
+  $('toggle').addEventListener('click', () => {
+    const p = $('panel'); p.classList.toggle('min');
+    $('toggle').textContent = p.classList.contains('min') ? '+' : '–';
+  });
+
+  /* ---------- Trasporto pubblico SETA (dati GTFS incorporati) ---------- */
+  const SETA = window.SETA_DATA;
+  const R = SETA.routes;
+  map.createPane('bus'); map.getPane('bus').style.zIndex = 420;      // sopra al traffico (400) e sotto agli incidenti (450)
+  map.createPane('stops'); map.getPane('stops').style.zIndex = 460;
+  const busCanvas = L.canvas({pane:'bus'}), stopCanvas = L.canvas({pane:'stops'});
+  const lineLayer = L.layerGroup(), stopLayer = L.layerGroup();
+  const STOP_MIN_ZOOM = 14;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const routeOrder = (a,b) => (R[a].n.length>2||isNaN(R[a].n)) - (R[b].n.length>2||isNaN(R[b].n)) || R[a].n.localeCompare(R[b].n,'it',{numeric:true});
+
+  // menu linee
+  Object.keys(R).sort(routeOrder).forEach(id => {
+    const o = document.createElement('option'); o.value = id;
+    o.textContent = R[id].n + ' · ' + R[id].name; $('lineSel').appendChild(o);
+  });
+
+  const activeGroups = () => new Set([...document.querySelectorAll('.grp:checked')].map(i => i.value));
+  const chip = id => '<button class="chip" data-r="'+id+'" style="background:'+R[id].c+'">'+esc(R[id].n)+'</button>';
+
+  function routePopup(id){
+    const r = R[id];
+    return '<b>Linea '+esc(r.n)+'</b><br>'+esc(r.name)+'<div class="pop-meta">'+r.t+' corse nel periodo di validità · '+({urbana:'urbana',navetta:'navetta centro',extraurbana:'extraurbana',scolastica:'scolastica'})[r.g]+'</div>';
+  }
+
+  function drawBus(){
+    lineLayer.clearLayers(); stopLayer.clearLayers();
+    const groups = activeGroups(), sel = $('lineSel').value;
+    const show = id => sel ? id === sel : groups.has(R[id].g);
+    let nLines = 0, nStops = 0;
+    if ($('busLines').checked){
+      // prima le linee extraurbane, sopra le urbane
+      const ord = {extraurbana:0, scolastica:1, urbana:2, navetta:3};
+      SETA.lines.filter(l => show(l.r)).sort((a,b) => ord[R[a.r].g]-ord[R[b.r].g]).forEach(l => {
+        const r = R[l.r];
+        L.polyline(l.p, {renderer:busCanvas, color:r.c, weight: sel ? 6 : (r.g==='extraurbana'?2.5:3.5), opacity: sel ? 0.95 : 0.75})
+          .bindPopup(routePopup(l.r)).addTo(lineLayer);
+        nLines++;
+      });
+    }
+    if ($('busStops').checked && (map.getZoom() >= STOP_MIN_ZOOM || sel)){
+      const b = map.getBounds().pad(0.2);
+      SETA.stops.forEach(s => {
+        const rs = s[3].filter(show);
+        if (!rs.length || !b.contains([s[0], s[1]])) return;
+        L.circleMarker([s[0], s[1]], {renderer:stopCanvas, radius: sel?5:4, weight:2, color:'#17324d', fillColor:'#fff', fillOpacity:1})
+          .bindPopup(() => '<b>'+esc(s[2])+'</b><div class="chips">'+s[3].slice().sort(routeOrder).map(chip).join('')+'</div>'
+            + '<a href="https://wimb.setaweb.it" target="_blank" rel="noopener">Prossimi passaggi in tempo reale (SETA)</a>')
+          .addTo(stopLayer);
+        nStops++;
+      });
+    }
+    lineLayer.addTo(map); stopLayer.addTo(map);
+    const v = SETA.meta.validita.map(d => d.slice(6,8)+'/'+d.slice(4,6)+'/'+d.slice(0,4));
+    $('busInfo').textContent = (sel ? 'Linea '+R[sel].n+' · ' : '') + nLines + ' percorsi'
+      + ($('busStops').checked ? (map.getZoom() < STOP_MIN_ZOOM && !sel ? ' · fermate visibili da zoom ' + STOP_MIN_ZOOM : ' · ' + nStops + ' fermate') : '')
+      + '. Orari SETA validi dal ' + v[0] + ' al ' + v[1] + '.';
+  }
+
+  ['busLines','busStops','lineSel'].forEach(id => $(id).addEventListener('change', () => {
+    drawBus();
+    const sel = $('lineSel').value;
+    if (sel && id === 'lineSel'){
+      const ls = lineLayer.getLayers(); if (ls.length) map.fitBounds(L.featureGroup(ls).getBounds(), {padding:[30,30]});
+    }
+  }));
+  document.querySelectorAll('.grp').forEach(i => i.addEventListener('change', drawBus));
+  map.on('moveend', () => { if ($('busStops').checked) drawBus(); });
+  // clic su un numero di linea dentro il popup della fermata: evidenzia quella linea
+  map.on('popupopen', e => e.popup.getElement().querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+    $('lineSel').value = b.dataset.r; map.closePopup(); drawBus();
+    const ls = lineLayer.getLayers(); if (ls.length) map.fitBounds(L.featureGroup(ls).getBounds(), {padding:[30,30]});
+  })));
+  drawBus();
+  map.attributionControl.addAttribution('Bus: SETA S.p.A. (GTFS via BusOne)');
+
+  const CFG = window.MAPPA_CONFIG || {};
+  if (CFG.tomtomKey){
+    $('keyBox').hidden = true;
+    $('key').value = CFG.tomtomKey; render(true);
+  } else {
+    const saved = store.get('tt_key');
+    if (saved){ $('key').value = saved; render(true); }
+  }
+  timer = setInterval(refresh, REFRESH_MIN*60000);
+})();
+</script>
+</body>
+</html>
