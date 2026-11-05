@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bus e traffico · Reggio Emilia</title>
+<meta name="description" content="Velocità dei bus SETA prevista dagli orari, tratto per tratto, sulla rete di Reggio Emilia. Più alto è il rilievo, più minuti servono per fare un chilometro.">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* Layout: colonna di controllo a sinistra (340px), mappa 3D a destra; su telefono mappa sopra e pannello sotto */
+  :root{
+    --bg:#f3f5f7; --panel:#ffffff; --fg:#14283c; --muted:#5b6d7f; --line:#dde3e9; --soft:#eef2f5;
+    --accent:#0b5cad; --chip:#14283c;
+    --font:"Titillium Web", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0e161e; --panel:#141f2a; --fg:#e4ebf1; --muted:#97a8b8; --line:#253442; --soft:#1b2834; --accent:#5aa9ff; --chip:#e4ebf1; color-scheme:dark; }
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--font);display:grid;grid-template-columns:350px 1fr;grid-template-rows:100%}
+  aside{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:20px 20px 28px;display:flex;flex-direction:column;gap:18px;min-width:0}
+  #map{position:relative;min-width:0}
+  header .crumb{font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:8px}
+  header .crumb a{color:var(--accent);text-decoration:none}
+  h1{margin:6px 0 6px;font-size:26px;line-height:1.1;font-weight:700;text-wrap:balance}
+  .lead{margin:0;color:var(--muted);font-size:13.5px;max-width:34ch}
+  .lab{display:block;font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:6px}
+  .seg{display:grid;grid-template-columns:repeat(4,1fr);background:var(--soft);border-radius:8px;padding:3px;gap:2px}
+  .seg button{font:inherit;font-size:13px;border:0;background:transparent;color:var(--fg);padding:7px 0;border-radius:6px;cursor:pointer;font-variant-numeric:tabular-nums}
+  .seg button[aria-pressed="true"]{background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.12);font-weight:700}
+  .pills{display:flex;flex-wrap:wrap;gap:6px}
+  .pill{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:5px 12px;border-radius:999px;cursor:pointer}
+  .pill[aria-pressed="true"]{background:var(--chip);color:var(--panel);border-color:var(--chip);font-weight:600}
+  select,input[type=search]{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--fg)}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .kpi{background:var(--soft);border-radius:8px;padding:10px 12px;min-width:0}
+  .kpi b{display:block;font:500 22px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+  .kpi span{font-size:12px;color:var(--muted)}
+  .slow{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+  .slow button{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:center;padding:7px 8px;border-radius:6px;cursor:pointer}
+  .slow button:hover,.slow button:focus-visible{background:var(--soft)}
+  .slow .v{font:500 13px var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+  .slow .t{font-size:13px;line-height:1.25;min-width:0}
+  .slow .t small{display:block;color:var(--muted);font-size:11.5px}
+  .note{font-size:12px;color:var(--muted);margin:0}
+  .note a{color:var(--accent)}
+  /* controlli sulla mappa */
+  .mapbar{position:absolute;z-index:2;top:12px;right:12px;display:flex;gap:8px}
+  .mapbar .seg{grid-template-columns:1fr 1fr;background:var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  .mapbar .seg button{padding:6px 12px}
+  .city{position:absolute;z-index:2;top:12px;left:12px;background:var(--panel);border-radius:6px;padding:4px 10px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  .city small{display:block;font-weight:400;font-size:11px;color:var(--muted)}
+  .legend{position:absolute;z-index:2;left:12px;bottom:28px;background:var(--panel);border-radius:8px;padding:8px 12px;box-shadow:0 1px 4px rgba(0,0,0,.15);width:min(320px, calc(100% - 24px))}
+  .legend .bar{height:8px;border-radius:4px;background:linear-gradient(90deg,#3f9e8a 0%,#9cc47a 25%,#ecc85a 45%,#e27a3a 62%,#c43a2c 80%,#5e0f1c 100%)}
+  .legend .ends{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+  .maplibregl-popup-content{font:13px/1.4 var(--font);color:#14283c;padding:10px 12px;border-radius:8px}
+  .pop b{font-size:14px}
+  .pop .big{font:500 20px var(--mono)}
+  .pop .muted{color:#5b6d7f;font-size:12px}
+  .chip{display:inline-block;min-width:22px;text-align:center;padding:0 5px;border-radius:4px;color:#fff;font-weight:700;font-size:12px;margin:2px 2px 0 0}
+  .check{display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer}
+  .tt{display:flex;flex-direction:column;gap:6px;background:var(--soft);border-radius:8px;padding:10px 12px}
+  .tt .row{display:flex;gap:6px}
+  .tt input[type=password]{flex:1;min-width:0;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg)}
+  .tt .btn{font:inherit;font-weight:600;border:0;border-radius:6px;background:var(--accent);color:#fff;padding:6px 12px;cursor:pointer}
+  .tt .status{font-size:12px;color:var(--muted)}
+  .tt .status.err{color:#c43a2c}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .legend .bar.tt{background:linear-gradient(90deg,#2e9e4f 0%,#2e9e4f 25%,#e8a317 50%,#d1342f 75%,#7a1414 100%);height:5px;margin-top:8px}
+  .legend .ttl{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:3px}
+  .pop .tt-now{margin-top:8px;padding-top:6px;border-top:1px solid #dde3e9}
+  .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);pointer-events:none}
+  @media (max-width: 760px){
+    body{grid-template-columns:1fr;grid-template-rows:62vh auto;height:auto}
+    #map{grid-row:1;height:62vh}
+    aside{grid-row:2;border-right:0;border-top:1px solid var(--line)}
+    .legend{bottom:30px}
+  }
+  @media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto} }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <div class="crumb"><span>Reggio Emilia · SETA + TomTom</span><a href="index.html">Traffico e linee ↗</a></div>
+    <h1>Dove rallentano i bus</h1>
+    <p class="lead">Velocità dei bus prevista dagli orari, fermata per fermata, sopra il traffico reale di TomTom. Più alto è il rilievo, più minuti servono al bus per fare un chilometro.</p>
+  </header>
+
+  <div>
+    <span class="lab">Rete</span>
+    <div class="pills" id="groups">
+      <button class="pill" data-g="urbana" aria-pressed="true">Urbane</button>
+      <button class="pill" data-g="navetta" aria-pressed="true">Navette centro</button>
+      <button class="pill" data-g="extraurbana" aria-pressed="false">Extraurbane</button>
+      <button class="pill" data-g="scolastica" aria-pressed="false">Scolastiche</button>
+    </div>
+  </div>
+
+  <div>
+    <span class="lab">Orario di partenza</span>
+    <div class="seg" id="bands">
+      <button data-b="m" aria-pressed="true">7–10</button>
+      <button data-b="g" aria-pressed="false">10–16</button>
+      <button data-b="s" aria-pressed="false">16–20</button>
+      <button data-b="t" aria-pressed="false">Giorno</button>
+    </div>
+  </div>
+
+  <div>
+    <label class="lab" for="line">Linea</label>
+    <select id="line"><option value="">Tutte</option></select>
+  </div>
+
+  <div>
+    <label class="lab" for="stop">Fermata</label>
+    <input id="stop" type="search" list="stopList" placeholder="Cerca per nome" autocomplete="off">
+    <datalist id="stopList"></datalist>
+  </div>
+
+  <div>
+    <span class="lab">Traffico in tempo reale (TomTom)</span>
+    <div class="tt">
+      <label class="check"><input type="checkbox" id="ttFlow" checked> Flussi di traffico</label>
+      <label class="check"><input type="checkbox" id="ttInc" checked> Incidenti, cantieri e chiusure</label>
+      <div id="ttKeyBox" class="row" hidden>
+        <input id="ttKey" type="password" placeholder="Chiave API TomTom" autocomplete="off" aria-label="Chiave API TomTom">
+        <button class="btn" id="ttApply">Applica</button>
+      </div>
+      <div class="status" id="ttStatus" aria-live="polite">Verifica della chiave…</div>
+    </div>
+  </div>
+
+  <div>
+    <label class="lab" for="busOp">Trasparenza rilievi bus</label>
+    <input id="busOp" type="range" min="0.25" max="1" step="0.05" value="0.9">
+  </div>
+
+  <div class="kpis" aria-live="polite">
+    <div class="kpi"><b id="kSpeed">–</b><span>km/h velocità media</span></div>
+    <div class="kpi"><b id="kMinKm">–</b><span>minuti per km</span></div>
+    <div class="kpi"><b id="kSlow">–</b><span>della rete sotto 10 km/h</span></div>
+    <div class="kpi"><b id="kKm">–</b><span>km di rete in fascia</span></div>
+  </div>
+
+  <div>
+    <span class="lab">Tratti più lenti</span>
+    <ol class="slow" id="slow"></ol>
+  </div>
+
+  <p class="note" id="note"></p>
+</aside>
+
+<div id="map" role="application" aria-label="Mappa 3D delle velocità dei bus a Reggio Emilia">
+  <div class="city">Reggio Emilia<small>Orari pubblicati · tracciati GTFS</small></div>
+  <div class="mapbar">
+    <div class="seg" id="dim">
+      <button data-d="3" aria-pressed="true">3D</button>
+      <button data-d="2" aria-pressed="false">2D</button>
+    </div>
+  </div>
+  <div class="legend" aria-label="Legenda">
+    <div class="ttl">Bus, velocità da orario</div>
+    <div class="bar"></div>
+    <div class="ends"><span>≥ 25 km/h · più veloce</span><span>più lento · &lt; 10 km/h</span></div>
+    <div id="ttLegend" hidden>
+      <div class="bar tt"></div>
+      <div class="ends"><span>Traffico: scorrevole</span><span>congestionato · fermo</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="data/velocita.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+(function(){
+  const D = window.VELOCITA, R = D.routes, S = D.stops;
+  const $ = id => document.getElementById(id);
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const fmt = (x, d=1) => x.toLocaleString('it-IT', {minimumFractionDigits:d, maximumFractionDigits:d});
+  const routeOrder = (a,b) => R[a].n.localeCompare(R[b].n, 'it', {numeric:true});
+  const chip = id => '<span class="chip" style="background:'+R[id].c+'">'+esc(R[id].n)+'</span>';
+
+  const state = { groups:new Set(['urbana','navetta']), band:'m', line:'', dim:3, stop:'' };
+
+  // ---- geometria: nastro a destra del senso di marcia, così le due direzioni non si sovrappongono
+  const LAT0 = 44.7, KX = 111320*Math.cos(LAT0*Math.PI/180), KY = 110540;
+  function ribbon(pts, off, w){
+    const xy = pts.map(p => [p[0]*KX, p[1]*KY]), n = xy.length, L = [], Rt = [];
+    for (let i=0;i<n;i++){
+      const a = xy[Math.max(0,i-1)], b = xy[Math.min(n-1,i+1)];
+      let dx = b[0]-a[0], dy = b[1]-a[1]; const len = Math.hypot(dx,dy) || 1; dx/=len; dy/=len;
+      const nx = dy, ny = -dx;                                        // normale verso destra
+      L.push([(xy[i][0]+nx*off)/KX, (xy[i][1]+ny*off)/KY]);
+      Rt.push([(xy[i][0]+nx*(off+w))/KX, (xy[i][1]+ny*(off+w))/KY]);
+    }
+    return [L.concat(Rt.reverse(), [L[0]])];
+  }
+  D.segs.forEach((s,i) => { s.i = i; s.poly = ribbon(s.p, 2, 14); });
+
+  // ---- menu linee e fermate
+  Object.keys(R).sort(routeOrder).forEach(id => {
+    const o = document.createElement('option'); o.value = id; o.textContent = R[id].n + ' · ' + R[id].name; $('line').appendChild(o);
+  });
+  const stopByName = {};
+  Object.entries(S).forEach(([id, s]) => { (stopByName[s[2]] = stopByName[s[2]] || []).push(id); });
+  Object.keys(stopByName).sort((a,b)=>a.localeCompare(b,'it')).forEach(n => {
+    const o = document.createElement('option'); o.value = n; $('stopList').appendChild(o);
+  });
+
+  // ---- filtro corrente
+  function visible(){
+    return D.segs.filter(s => {
+      const v = s.v[state.band]; if (!v) return false;
+      if (state.line) return s.r.includes(state.line);
+      return s.r.some(r => state.groups.has(R[r].g));
+    });
+  }
+
+  function features(list){
+    const poly = [], line = [];
+    list.forEach(s => {
+      const v = s.v[state.band][0], props = {i:s.i, v, h: Math.min(60/v, 15)};
+      poly.push({type:'Feature', properties:props, geometry:{type:'Polygon', coordinates:s.poly}});
+      line.push({type:'Feature', properties:props, geometry:{type:'LineString', coordinates:s.p}});
+    });
+    return [{type:'FeatureCollection', features:poly}, {type:'FeatureCollection', features:line}];
+  }
+
+  // ---- mappa
+  const base = dark ? 'World_Dark_Gray' : 'World_Light_Gray';
+  const esri = l => 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/' + base + '_' + l + '/MapServer/tile/{z}/{y}/{x}';
+  const map = window._map = new maplibregl.Map({
+    container:'map', center:[10.6312, 44.6983], zoom:13.3, pitch:55, bearing:-18, maxPitch:75,
+    attributionControl:{compact:true},
+    style:{
+      version:8,
+      sources:{
+        base:{type:'raster', tiles:[esri('Base')], tileSize:256, maxzoom:16, attribution:'Sfondo © Esri, HERE, Garmin, © OpenStreetMap'},
+        ref:{type:'raster', tiles:[esri('Reference')], tileSize:256, maxzoom:16},
+        segs:{type:'geojson', data:{type:'FeatureCollection', features:[]}, attribution:'Orari SETA S.p.A. (GTFS via BusOne)'},
+        lines:{type:'geojson', data:{type:'FeatureCollection', features:[]}},
+        hl:{type:'geojson', data:{type:'FeatureCollection', features:[]}}
+      },
+      layers:[
+        {id:'base', type:'raster', source:'base'},
+        {id:'ref', type:'raster', source:'ref', paint:{'raster-opacity':0.85}},
+      ]
+    }
+  });
+  map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'bottom-right');
+  map.addControl(new maplibregl.ScaleControl({unit:'metric'}), 'bottom-right');
+
+  const COLOR = ['interpolate', ['linear'], ['get','v'],
+    6,'#5e0f1c', 10,'#c43a2c', 13,'#e27a3a', 16,'#ecc85a', 20,'#9cc47a', 25,'#3f9e8a'];
+
+  map.once('style.load', () => {
+    map.addLayer({id:'ext', type:'fill-extrusion', source:'segs', paint:{
+      'fill-extrusion-color':COLOR,
+      'fill-extrusion-height':['interpolate',['linear'],['zoom'], 11,['*',['get','h'],70], 13,['*',['get','h'],38], 15,['*',['get','h'],14], 17,['*',['get','h'],5]],
+      'fill-extrusion-opacity':0.9,
+      'fill-extrusion-vertical-gradient':true }});
+    map.addLayer({id:'flat', type:'line', source:'lines', layout:{'line-cap':'round','visibility':'none'}, paint:{
+      'line-color':COLOR, 'line-offset':['interpolate',['linear'],['zoom'],11,1,16,5],
+      'line-width':['interpolate',['linear'],['zoom'],11,2,16,7] }});
+    map.addLayer({id:'hl', type:'line', source:'hl', paint:{'line-color':dark?'#ffffff':'#14283c','line-width':3,'line-dasharray':[2,1]}});
+    update();
+    startTomTom();
+    ['ext','flat'].forEach(l => {
+      map.on('click', l, e => openSeg(D.segs[e.features[0].properties.i], e.lngLat));
+      map.on('mouseenter', l, () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', l, () => map.getCanvas().style.cursor = '');
+    });
+  });
+
+  let popup = null;
+  function openSeg(s, at){
+    const v = s.v[state.band] || s.v.t, mid = s.p[Math.floor(s.p.length/2)];
+    if (popup) popup.remove();
+    popup = new maplibregl.Popup({maxWidth:'280px'}).setLngLat(at || mid).setHTML(
+      '<div class="pop"><b>'+esc(S[s.a][2])+' → '+esc(S[s.b][2])+'</b><br>'
+      + s.r.slice().sort(routeOrder).map(chip).join('')
+      + '<div class="big">'+fmt(v[0])+' km/h</div>'
+      + '<div class="muted">Bus da orario · '+fmt(60/v[0])+' min/km · tratto di '+fmt(s.l,0)+' m · '+v[1]+' corse in fascia '+D.meta.fasce[state.band]+'</div>'
+      + (tt.key ? '<div class="tt-now" id="ttNow"><span class="muted">Traffico adesso: lettura TomTom…</span></div>' : '')
+      + '</div>'
+    ).addTo(map);
+    map.getSource('hl').setData({type:'Feature', geometry:{type:'LineString', coordinates:s.p}});
+    if (tt.key) liveSpeed(s, mid);
+  }
+
+  /* ---------- TomTom: sfondo, flussi, incidenti e velocità reale del tratto ---------- */
+  const CFG = window.MAPPA_CONFIG || {};
+  const store = { get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  const tt = { key:'', api:null, timer:null };
+  const ttStamp = () => Math.floor(Date.now()/300000);
+  const ttStatus = (m, err) => { $('ttStatus').textContent = m; $('ttStatus').classList.toggle('err', !!err); };
+  function ttUrl(kind, k){
+    const key = encodeURIComponent(k || tt.key), t = ttStamp();
+    if (kind === 'base') return tt.api === 'orbis'
+      ? 'https://a.api.tomtom.com/maps/orbis/display/raster/tile/{z}/{x}/{y}?apiVersion=2&key='+key+'&style='+(dark?'street-dark':'street-light')+'&tileSize=256&geopoliticalView=Unified'
+      : 'https://a.api.tomtom.com/map/1/tile/basic/'+(dark?'night':'main')+'/{z}/{x}/{y}.png?key='+key+'&tileSize=256';
+    if (tt.api === 'orbis') return 'https://api.tomtom.com/maps/orbis/traffic/'+kind+'/raster/tile/{z}/{x}/{y}?apiVersion=2&key='+key+'&style='+(dark?'dark':'light')+'&tileSize=256&t='+t;
+    const style = kind === 'flow' ? 'relative0' : (dark ? 's0-dark' : 's0');
+    return 'https://api.tomtom.com/traffic/map/4/tile/'+kind+'/'+style+'/{z}/{x}/{y}.png?key='+key+'&tileSize=256&t='+t;
+  }
+  function probe(api, k){
+    return new Promise(res => {
+      const img = new Image(), to = setTimeout(() => res(false), 8000);
+      img.onload = () => { clearTimeout(to); res(true); };
+      img.onerror = () => { clearTimeout(to); res(false); };
+      const save = tt.api; tt.api = api;
+      img.src = ttUrl('flow', k).replace('{z}','12').replace('{x}','2168').replace('{y}','1478');
+      tt.api = save;
+    });
+  }
+  async function connect(k){
+    ttStatus('Verifica della chiave…');
+    let api = null;
+    if (await probe('orbis', k)) api = 'orbis'; else if (await probe('legacy', k)) api = 'legacy';
+    if (!api){
+      $('ttKeyBox').hidden = false;
+      ttStatus(location.protocol === 'file:'
+        ? 'TomTom rifiuta la chiave. Se ha la whitelist di dominio funziona solo dal sito pubblicato; per le prove in locale usa una chiave senza whitelist.'
+        : 'TomTom rifiuta la chiave su ' + location.hostname + ': controlla la whitelist e di aver copiato la chiave completa.', true);
+      return;
+    }
+    tt.key = k; tt.api = api;
+    ['tt-inc','tt-flow','tt-base'].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); });
+    map.addSource('tt-base', {type:'raster', tiles:[ttUrl('base')], tileSize:256, maxzoom:22, attribution:'Mappa e traffico © TomTom'});
+    map.addLayer({id:'tt-base', type:'raster', source:'tt-base'}, 'ref');
+    map.setLayoutProperty('base','visibility','none'); map.setLayoutProperty('ref','visibility','none');
+    map.addSource('tt-flow', {type:'raster', tiles:[ttUrl('flow')], tileSize:256, maxzoom:22});
+    map.addLayer({id:'tt-flow', type:'raster', source:'tt-flow', paint:{'raster-opacity':0.9}}, 'ext');
+    map.addSource('tt-inc', {type:'raster', tiles:[ttUrl('incidents')], tileSize:256, maxzoom:22});
+    map.addLayer({id:'tt-inc', type:'raster', source:'tt-inc'}, 'hl');
+    applyTT();
+    clearInterval(tt.timer);
+    tt.timer = setInterval(() => {
+      ['flow','incidents'].forEach(k2 => { const src = map.getSource(k2 === 'flow' ? 'tt-flow' : 'tt-inc'); if (src && src.setTiles) src.setTiles([ttUrl(k2)]); });
+      ttStatus('API ' + (tt.api==='orbis'?'Orbis':'v4') + ' · aggiornato alle ' + new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}));
+    }, 300000);
+    ttStatus('API ' + (tt.api==='orbis'?'Orbis':'v4') + ' · aggiornato alle ' + new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) + ' · ogni 5 min');
+  }
+  function applyTT(){
+    if (!map.getLayer('tt-flow')) return;
+    map.setLayoutProperty('tt-flow','visibility', $('ttFlow').checked ? 'visible' : 'none');
+    map.setLayoutProperty('tt-inc','visibility', $('ttInc').checked ? 'visible' : 'none');
+    $('ttLegend').hidden = !$('ttFlow').checked;
+  }
+  function startTomTom(){
+    const k = CFG.tomtomKey || store.get('tt_key') || '';
+    if (!k){ $('ttKeyBox').hidden = false; ttStatus('Inserisci una chiave TomTom gratuita per vedere il traffico.'); return; }
+    if (!CFG.tomtomKey) $('ttKey').value = k;
+    connect(k);
+  }
+  $('ttApply').addEventListener('click', () => { const k = $('ttKey').value.trim(); if (!k) return; store.set('tt_key', k); connect(k); });
+  $('ttKey').addEventListener('keydown', e => { if (e.key === 'Enter') $('ttApply').click(); });
+  ['ttFlow','ttInc'].forEach(id => $(id).addEventListener('change', applyTT));
+  $('busOp').addEventListener('input', e => {
+    const o = parseFloat(e.target.value);
+    if (map.getLayer('ext')) map.setPaintProperty('ext','fill-extrusion-opacity', o);
+    if (map.getLayer('flat')) map.setPaintProperty('flat','line-opacity', o);
+  });
+
+  // velocità reale TomTom nel punto centrale del tratto (Flow Segment Data, API v4)
+  async function liveSpeed(s, mid){
+    const box = () => document.getElementById('ttNow');
+    try{
+      const url = 'https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/16/json?unit=kmph&point='
+        + mid[1].toFixed(6) + ',' + mid[0].toFixed(6) + '&key=' + encodeURIComponent(tt.key);
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status);
+      const f = (await r.json()).flowSegmentData;
+      if (!box()) return;
+      if (f.roadClosure){ box().innerHTML = '<b>Traffico adesso: strada chiusa</b>'; return; }
+      const bus = (s.v[state.band] || s.v.t)[0], ratio = f.currentSpeed / f.freeFlowSpeed;
+      const stato = ratio >= 0.85 ? 'scorrevole' : ratio >= 0.6 ? 'rallentato' : ratio >= 0.35 ? 'congestionato' : 'molto congestionato';
+      box().innerHTML = '<div class="muted">Traffico adesso (TomTom)</div><div class="big">' + fmt(f.currentSpeed, 0) + ' km/h</div>'
+        + '<div class="muted">' + stato + ' · ' + fmt(f.freeFlowSpeed, 0) + ' km/h a flusso libero · affidabilità ' + fmt(100*f.confidence, 0) + '%'
+        + '<br>Il bus da orario va al ' + fmt(100*bus/f.currentSpeed, 0) + '% della velocità attuale del traffico</div>';
+    }catch(e){
+      if (box()) box().innerHTML = '<span class="muted">Velocità reale del tratto non disponibile con questa chiave (serve la Traffic API v4 Flow Segment Data).</span>';
+    }
+  }
+
+  function update(){
+    const list = visible(), [poly, line] = features(list);
+    if (map.getSource('segs')){ map.getSource('segs').setData(poly); map.getSource('lines').setData(line); }
+
+    // indicatori: velocità media = km totali / ore totali (pesata sulla lunghezza dei tratti)
+    let km = 0, h = 0, kmSlow = 0;
+    list.forEach(s => { const v = s.v[state.band][0], k = s.l/1000; km += k; h += k/v; if (v < 10) kmSlow += k; });
+    const vm = km/h;
+    $('kSpeed').textContent = list.length ? fmt(vm) : '–';
+    $('kMinKm').textContent = list.length ? fmt(60/vm) : '–';
+    $('kSlow').textContent = list.length ? fmt(100*kmSlow/km, 0) + '%' : '–';
+    $('kKm').textContent = list.length ? fmt(km, 0) : '–';
+
+    // tratti più lenti (almeno 150 m, per evitare tratti brevissimi poco significativi)
+    const slow = list.filter(s => s.l >= 150).sort((a,b) => a.v[state.band][0]-b.v[state.band][0]).slice(0,6);
+    $('slow').innerHTML = slow.map(s => '<li><button data-i="'+s.i+'"><span class="v">'+fmt(s.v[state.band][0])+'</span>'
+      + '<span class="t">'+esc(S[s.a][2])+' → '+esc(S[s.b][2])+'<small>linee '+s.r.slice().sort(routeOrder).map(r=>esc(R[r].n)).join(', ')+'</small></span></button></li>').join('')
+      || '<li class="note">Nessun tratto per questa selezione.</li>';
+
+    const d = D.meta.giorno;
+    $('note').innerHTML = 'Velocità prevista dagli orari di un giorno feriale (' + d.slice(6)+'/'+d.slice(4,6)+'/'+d.slice(0,4)
+      + '): distanza lungo il percorso diviso il tempo tra la partenza da una fermata e l\'arrivo alla successiva. Non è una misura del traffico: per quello c\'è lo strato TomTom in tempo reale, e cliccando un tratto vedi le due velocità a confronto. Fonti: orari SETA S.p.A. via BusOne; traffico © TomTom.';
+  }
+
+  update();   // pannello e indicatori subito, anche prima che la mappa sia pronta
+
+  $('slow').addEventListener('click', e => {
+    const b = e.target.closest('button[data-i]'); if (!b) return;
+    const s = D.segs[+b.dataset.i], mid = s.p[Math.floor(s.p.length/2)];
+    map.flyTo({center:mid, zoom:15.6, pitch: state.dim===3?55:0, essential:true});
+    map.once('moveend', () => openSeg(s));
+  });
+
+  function press(groupEl, attr, val){
+    groupEl.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
+  }
+  $('bands').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.band = b.dataset.b; press($('bands'),'b',state.band); if (popup) popup.remove(); update(); });
+  $('groups').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const g = b.dataset.g, on = b.getAttribute('aria-pressed') !== 'true';
+    b.setAttribute('aria-pressed', String(on)); on ? state.groups.add(g) : state.groups.delete(g); update();
+  });
+  $('line').addEventListener('change', e => {
+    state.line = e.target.value; update();
+    if (state.line){
+      const b = new maplibregl.LngLatBounds();
+      visible().forEach(s => s.p.forEach(p => b.extend(p)));
+      if (!b.isEmpty()) map.fitBounds(b, {padding:60, pitch: state.dim===3?50:0});
+    }
+  });
+  $('dim').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.dim = +b.dataset.d; press($('dim'),'d',state.dim);
+    const three = state.dim === 3;
+    map.setLayoutProperty('ext','visibility', three?'visible':'none');
+    map.setLayoutProperty('flat','visibility', three?'none':'visible');
+    map.easeTo({pitch: three?55:0, bearing: three?-18:0});
+  });
+  $('stop').addEventListener('change', e => {
+    const ids = stopByName[e.target.value]; if (!ids) return;
+    const s = S[ids[0]];
+    map.flyTo({center:[s[1], s[0]], zoom:16.2, essential:true});
+    const out = D.segs.filter(x => ids.includes(x.a) && x.v[state.band]);
+    if (popup) popup.remove();
+    popup = new maplibregl.Popup({maxWidth:'300px'}).setLngLat([s[1], s[0]]).setHTML(
+      '<div class="pop"><b>'+esc(e.target.value)+'</b><div class="muted">In partenza da questa fermata, fascia '+D.meta.fasce[state.band]+'</div>'
+      + (out.length ? out.map(x => '<div>→ '+esc(S[x.b][2])+': <b>'+fmt(x.v[state.band][0])+' km/h</b></div>').join('') : '<div class="muted">Nessuna corsa in questa fascia.</div>')
+      + '</div>').addTo(map);
+  });
+})();
+</script>
+</body>
+</html>
